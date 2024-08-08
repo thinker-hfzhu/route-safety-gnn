@@ -2,6 +2,7 @@ import math
 import numpy as np
 import polyline
 from geographiclib.geodesic import Geodesic
+from weather import get_station_code
 
 """
 ways																
@@ -109,8 +110,9 @@ class WayGraph:
     __node_idx__: {22222101:0, 22222102:1, ...}
     '''
     def __init__(self):
-        self.ways = [{'way_id': 0, 'length': 0}] # way index is from 1 for negative (1 != -1, 0 == -0)
+        self.ways = [{'way_id': 0, 'length': 0}] # way index is from 1 for negative (1 != -1, 0 == -0) 
         self.nodes = []
+        self.stations = []
         self.relations = []
 
         self.non_road_way = 0
@@ -122,6 +124,7 @@ class WayGraph:
         self.__way_idx__ = {}
         self.__node_idx__ = {}
         self.__relation_idx__ = {}
+        self.__station_idx__ = {}
 
     def initialize(self, ways, nodes = None):
         self.ways = ways
@@ -200,8 +203,8 @@ class WayGraph:
         nodes = raw_way[6].strip('}{').split(',')
         
         if way['road_class'] > 0:
-            way['from_node'] = self.__get_node_index__(int(nodes[0]), True)
-            way['to_node'] = self.__get_node_index__(int(nodes[-1]), False)
+            way['from_node'] = self.__get_node_index__(int(nodes[0]), points[0], True)
+            way['to_node'] = self.__get_node_index__(int(nodes[-1]), points[-1], False)
 
             self.__way_idx__[way['way_id']] = len(self.ways)
             self.ways.append(way)
@@ -281,17 +284,30 @@ class WayGraph:
         for relation in self.__relations__:
             self.__settle_relation(relation)
 
-    def __get_node_index__(self, node_id, from_node):
+    def __get_node_index__(self, node_id, point, from_node):
         way_index = len(self.ways)
         node_index = self.__node_idx__.get(node_id)
         if node_index == None:
             node_index = len(self.nodes)
             self.__node_idx__[node_id] = node_index
-            self.nodes.append({'node_id': node_id, 'ways': [way_index if from_node else -way_index]})
+
+            station_index = self.__get_station_index__(get_station_code(point[0], point[1]))
+            self.nodes.append({'node_id': node_id, 'station': station_index, 'ways': [way_index if from_node else -way_index]})
         else:
             self.nodes[node_index]['ways'].append(way_index if from_node else -way_index)
             
         return node_index
+
+    def __get_station_index__(self, station_code):
+        station_index = self.__station_idx__.get(station_code)
+        if station_index == None:
+            station_index = len(self.stations)
+            self.__station_idx__[station_code] = station_index
+            self.stations.append({'station': station_code, 'nodes': 1})
+        else:
+            self.stations[station_index]['nodes'] += 1
+        
+        return station_index
 
     def __append_leaf_ways__(self, way):
         from_index = self.__node_idx__.get(way['from_node'])
@@ -652,20 +668,6 @@ def _tune_shape(from_way, to_way, bearing_change):
             # calucated as negative sign
             to_way['curve_left'], to_way['curve_right'] = to_shape.curve()
 
-'''  
-36.172345, -115.233860: short dual carriage way
-36.104561, -115.189888
-
-36.018183, -115.081264 not u turn after roundabout
-35.998245, -114.963407 north / west two dual ways
-36.180800, -115.308580 curve twist
-
-24429897 wvl{Eftl}Te@?g@AYC adas:chs':'313;1;-25|304;6;-40
-1296585025 }uojFhoiwUEKEJ 
-97824843 aoppFxyfzUFCBCBE@G?GAGAECEECGAE? 956;94;25|948;79;104|946;61;182|953;45;219|960;24;216|961;8;176
-119509083 ujuxGrnlaKSPq@Tm@TcCh@_Dr@w@R{A`@u@Rw@RkD~@mD~@{EnAeD|@gAZ_Bb@k@PyDfAqHtByCz@{DhAaD|@kAf@{AtA
-'''
-
 # points = polyline.decode("abkyGntl`KIg@KB") 
 # shape = WayShape(points, False, False)
 # print(shape.curve())
@@ -675,47 +677,7 @@ def _tune_shape(from_way, to_way, bearing_change):
 # _set_curve_slope(way, tags, shape)
 # print(way)
 
-# points = polyline.decode("_dw_FxjjwTAi@") 
-# shape = WayShape(points, False, False)
-# print(shape.curve())
-
 # way = {}
 # tags = {'f_node_height': 506.5, 't_node_height': 497.93}
 # _set_curve_slope(way, tags, shape)
 # print(way)
-
-import os 
-import pandas as pd 
-
-data_dir = "~/data/GNN"
-state = 'NV'
-ways = pd.read_csv(os.path.join(data_dir, f"{state}/WAYS_.csv"))
-ways.drop
-# graph = WayGraph()
-# # graph.ways = ways
-# graph.initialize(ways)
-
-aadts = pd.read_csv(os.path.join(data_dir, "aadt_pred_train.csv"))
-
-# way_ids = [779141161, 1273222553, 1232757193]
-ways_without_aadt = []
-ways_with_aadt = pd.merge(ways, aadts, how='inner', on=['way_id'])
-
-ways_with_aadt = pd.DataFrame(ways_with_aadt, columns=['way_id', 'length', 'oneway', 'road_class', 'road_type', 'divider', 'urban', 'bipesz',
-                             'lane_count', 'forward_lane_count', 'backward_lane_count', 'forward_speed', 'backward_speed',
-                             'start_bearing', 'end_bearing', 'curve_left', 'curve_right', 'slope_up', 'slope_down', 
-                              'aadt_2016', 'aadt_2017', 'aadt_2018', 'aadt_2019', 'aadt_2020', 'aadt_2021', 'aadt_2022'], dtype=int)
-
-ways.to_csv(os.path.join(data_dir, "way_aadt_pred_train.csv"), index=False)
-
-# for aadt in aadts:
-#     way = graph.get_way(aadt['way_id'])
-#     print(way)
-
-# graph.ways.replace(np.nan, 0, inplace=True)
-# ways = pd.DataFrame(graph.ways, columns=['way_id', 'length', 'oneway', 'road_class', 'road_type', 'divider', 'urban', 'bipesz',
-#                              'lane_count', 'forward_lane_count', 'backward_lane_count', 'forward_speed', 'backward_speed',
-#                              'start_bearing', 'end_bearing', 'curve_left', 'curve_right', 'slope_up', 'slope_down', 
-#                               'from_node', 'to_node'], dtype=int) 
-
-# ways.to_csv(os.path.join(data_dir, f"{state}/WAYS_.csv"), index=False)
